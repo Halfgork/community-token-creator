@@ -10,11 +10,9 @@ import {
   BarChart3, 
   Zap,
   CheckCircle,
-  Star,
-  Globe,
   Plus
 } from "lucide-react";
-import { ConnectWallet } from "@/components/shared/ConnectWallet";
+import ConnectWallet from "@/components/shared/ConnectWallet";
 import { useWalletStore } from "@/stores/walletStore";
 
 export default function HomePage() {

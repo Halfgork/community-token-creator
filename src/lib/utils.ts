@@ -93,7 +93,7 @@ export function isValidStellarAddress(address: string): boolean {
   return /^G[A-Z2-7]{55}$/.test(address);
 }
 
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends (...args: unknown[]) => unknown>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {

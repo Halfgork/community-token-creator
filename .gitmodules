@@ -1,0 +1,3 @@
+[submodule "contracts/soroban-token-contract"]
+	path = contracts/soroban-token-contract
+	url = https://github.com/Halfgork/soroban-token-contract.git

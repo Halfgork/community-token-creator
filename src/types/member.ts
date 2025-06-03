@@ -63,7 +63,7 @@ export interface MemberActivity {
   communityId: string;
   type: ActivityType;
   description: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, string | number | boolean>;
   timestamp: Date;
 }
 

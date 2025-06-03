@@ -11,8 +11,19 @@ import {
   Users,
   Coins,
   Settings as SettingsIcon,
-  Zap
+  Zap,
+  AlertCircle,
+  Loader2,
+  Wallet
 } from 'lucide-react';
+import { useWalletStore } from '@/stores/walletStore';
+import CommunityTokenManager, { 
+  CommunityTokenConfig, 
+  TokenDistribution,
+  DEFAULT_DISTRIBUTIONS,
+  calculateTokenDistribution
+} from '@/lib/tokenOperations';
+import { contractAPI, CommunityTokenRequest } from '@/lib/contractAPI';
 
 interface CommunityFormData {
   // Basic Info
@@ -34,10 +45,15 @@ interface CommunityFormData {
   proposalThreshold: number;
   categories: string[];
   
-  // Distribution
+  // Distribution - Percentages
   treasuryAllocation: number;
   founderAllocation: number;
   communityAllocation: number;
+  
+  // Distribution - Wallet Addresses
+  treasuryWallet: string;
+  founderWallet: string;
+  communityWallet: string;
 }
 
 const initialFormData: CommunityFormData = {
@@ -56,6 +72,9 @@ const initialFormData: CommunityFormData = {
   treasuryAllocation: 50,
   founderAllocation: 20,
   communityAllocation: 30,
+  treasuryWallet: '',
+  founderWallet: '',
+  communityWallet: '',
 };
 
 const steps = [
@@ -70,6 +89,18 @@ export default function CreateCommunityPage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<CommunityFormData>(initialFormData);
   const [loading, setLoading] = useState(false);
+  const [deploymentStatus, setDeploymentStatus] = useState<{
+    stage: 'idle' | 'deploying' | 'configuring' | 'distributing' | 'completed' | 'error';
+    message: string;
+    contractId?: string;
+    error?: string;
+  }>({
+    stage: 'idle',
+    message: '',
+  });
+
+  const { address: walletAddress, isConnected } = useWalletStore();
+  const [tokenManager] = useState(() => new CommunityTokenManager());
 
   const updateFormData = (data: Partial<CommunityFormData>) => {
     setFormData(prev => ({ ...prev, ...data }));
@@ -88,12 +119,147 @@ export default function CreateCommunityPage() {
   };
 
   const handleSubmit = async () => {
+    if (!isConnected || !walletAddress) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
     setLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setLoading(false);
-    // Redirect to community page
-    console.log('Creating community with data:', formData);
+    setDeploymentStatus({ stage: 'deploying', message: 'Requesting contract deployment from backend...' });
+
+    try {
+      // Call backend API for contract deployment
+      const deploymentRequest: CommunityTokenRequest = {
+        tokenName: formData.tokenName,
+        tokenSymbol: formData.tokenSymbol,
+        decimals: formData.decimals,
+        totalSupply: formData.initialSupply.toString(),
+        adminAddress: walletAddress,
+        communityName: formData.name,
+        description: formData.description,
+        
+        // Distribution percentages
+        treasuryAllocation: formData.treasuryAllocation,
+        founderAllocation: formData.founderAllocation,
+        communityAllocation: formData.communityAllocation,
+        
+        // Wallet addresses for token distribution
+        treasuryWallet: formData.treasuryWallet,
+        founderWallet: formData.founderWallet,
+        communityWallet: formData.communityWallet,
+      };
+
+      const deployResult = await contractAPI.deployCommunityToken(deploymentRequest);
+      
+      if (!deployResult.success) {
+        throw new Error(deployResult.error || 'Failed to deploy token contract');
+      }
+
+      setDeploymentStatus({ 
+        stage: 'configuring', 
+        message: 'Contract deployed! Configuring community...',
+        contractId: deployResult.contractId
+      });
+
+      // Store community data locally or in backend
+      // This would typically be saved to a database
+      const communityData = {
+        id: deployResult.contractId,
+        name: formData.name,
+        description: formData.description,
+        contractId: deployResult.contractId,
+        tokenSymbol: formData.tokenSymbol,
+        tokenName: formData.tokenName,
+        totalSupply: formData.initialSupply.toString(),
+        adminAddress: walletAddress,
+        governance: {
+          votingPeriod: formData.votingPeriod,
+          quorumPercentage: formData.quorumPercentage,
+          proposalThreshold: formData.proposalThreshold,
+        },
+        distribution: {
+          treasury: formData.treasuryAllocation,
+          founder: formData.founderAllocation,
+          community: formData.communityAllocation,
+          treasuryWallet: formData.treasuryWallet,
+          founderWallet: formData.founderWallet,
+          communityWallet: formData.communityWallet,
+        },
+        createdAt: new Date().toISOString(),
+        memberCount: 1, // Creator starts as first member
+        isOwner: true,
+      };
+
+      // Save to localStorage for now (would be database in production)
+      const existingCommunities = JSON.parse(localStorage.getItem('communities') || '[]');
+      existingCommunities.push(communityData);
+      localStorage.setItem('communities', JSON.stringify(existingCommunities));
+      
+      // Also save individual community data
+      localStorage.setItem(`community_${deployResult.contractId}`, JSON.stringify(communityData));
+
+      setDeploymentStatus({ 
+        stage: 'completed', 
+        message: 'Community created successfully!',
+        contractId: deployResult.contractId
+      });
+
+      console.log('Community created:', communityData);
+
+      // Wait a moment before redirect
+      setTimeout(() => {
+        window.location.href = `/community/${deployResult.contractId}`;
+      }, 2000);
+
+    } catch (error) {
+      console.error('Error creating community:', error);
+      setDeploymentStatus({
+        stage: 'error',
+        message: 'Failed to create community',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderDeploymentStatus = () => {
+    if (deploymentStatus.stage === 'idle') return null;
+
+    const getStatusColor = () => {
+      switch (deploymentStatus.stage) {
+        case 'error': return 'text-red-600 bg-red-50 border-red-200';
+        case 'completed': return 'text-accent-600 bg-accent-50 border-accent-200';
+        default: return 'text-primary-600 bg-primary-50 border-primary-200';
+      }
+    };
+
+    const getStatusIcon = () => {
+      switch (deploymentStatus.stage) {
+        case 'error': return <AlertCircle className="w-5 h-5" />;
+        case 'completed': return <CheckCircle className="w-5 h-5" />;
+        default: return <Loader2 className="w-5 h-5 animate-spin" />;
+      }
+    };
+
+    return (
+      <div className={`border rounded-lg p-4 mb-6 ${getStatusColor()}`}>
+        <div className="flex items-center space-x-3">
+          {getStatusIcon()}
+          <div className="flex-1">
+            <p className="font-medium">{deploymentStatus.message}</p>
+            {deploymentStatus.contractId && (
+              <p className="text-sm opacity-75 font-mono mt-1">
+                Contract: {deploymentStatus.contractId}
+              </p>
+            )}
+            {deploymentStatus.error && (
+              <p className="text-sm mt-1">{deploymentStatus.error}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const renderStepContent = () => {
@@ -290,80 +456,189 @@ export default function CreateCommunityPage() {
         const totalAllocation = formData.treasuryAllocation + formData.founderAllocation + formData.communityAllocation;
         
         return (
-          <div className="space-y-6">
-            <div className="bg-secondary-50 p-4 rounded-lg">
-              <h3 className="font-medium text-secondary-900 mb-2">Token Distribution</h3>
-              <p className="text-sm text-secondary-600">
-                Allocate your initial token supply across different purposes
+          <div className="space-y-8">
+            {/* Token Distribution Percentages */}
+            <div>
+              <h3 className="text-lg font-semibold text-secondary-900 mb-4">Token Distribution</h3>
+              <p className="text-secondary-600 mb-6">Allocate your initial token supply across different purposes</p>
+              
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-secondary-900 mb-2">
+                    Treasury Allocation ({formData.treasuryAllocation}%)
+                  </label>
+                  <div className="space-y-2">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={formData.treasuryAllocation}
+                      onChange={(e) => updateFormData({ treasuryAllocation: parseInt(e.target.value) })}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-xs text-secondary-500">
+                      <span>0%</span>
+                      <span>{(formData.initialSupply * formData.treasuryAllocation / 100).toLocaleString()} tokens</span>
+                      <span>100%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-secondary-900 mb-2">
+                    Founder Allocation ({formData.founderAllocation}%)
+                  </label>
+                  <div className="space-y-2">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={formData.founderAllocation}
+                      onChange={(e) => updateFormData({ founderAllocation: parseInt(e.target.value) })}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-xs text-secondary-500">
+                      <span>0%</span>
+                      <span>{(formData.initialSupply * formData.founderAllocation / 100).toLocaleString()} tokens</span>
+                      <span>100%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-secondary-900 mb-2">
+                    Community Allocation ({formData.communityAllocation}%)
+                  </label>
+                  <div className="space-y-2">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={formData.communityAllocation}
+                      onChange={(e) => updateFormData({ communityAllocation: parseInt(e.target.value) })}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-xs text-secondary-500">
+                      <span>0%</span>
+                      <span>{(formData.initialSupply * formData.communityAllocation / 100).toLocaleString()} tokens</span>
+                      <span>100%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {totalAllocation !== 100 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-4">
+                  <p className="text-red-800">
+                    Total allocation: {totalAllocation}%. Must equal 100% to proceed.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Wallet Addresses */}
+            <div>
+              <h3 className="text-lg font-semibold text-secondary-900 mb-4">Wallet Addresses</h3>
+              <p className="text-secondary-600 mb-6">
+                Specify the Stellar wallet addresses where tokens will be distributed
               </p>
+
+              <div className="space-y-6">
+                {/* Treasury Wallet */}
+                <div>
+                  <label className="block text-sm font-medium text-secondary-900 mb-2">
+                    Treasury Wallet Address *
+                  </label>
+                  <p className="text-sm text-secondary-600 mb-3">
+                    This wallet will hold {formData.treasuryAllocation}% ({(formData.initialSupply * formData.treasuryAllocation / 100).toLocaleString()} tokens) 
+                    for community treasury and governance spending
+                  </p>
+                  <input
+                    type="text"
+                    value={formData.treasuryWallet}
+                    onChange={(e) => updateFormData({ treasuryWallet: e.target.value })}
+                    placeholder="G... (Stellar wallet address)"
+                    className="w-full px-4 py-3 border border-secondary-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                  />
+                  {formData.treasuryWallet && !formData.treasuryWallet.match(/^G[A-Z2-7]{55}$/) && (
+                    <p className="text-red-600 text-sm mt-1">Please enter a valid Stellar address (starts with G)</p>
+                  )}
+                </div>
+
+                {/* Founder Wallet */}
+                <div>
+                  <label className="block text-sm font-medium text-secondary-900 mb-2">
+                    Founder Wallet Address *
+                  </label>
+                  <p className="text-sm text-secondary-600 mb-3">
+                    This wallet will receive {formData.founderAllocation}% ({(formData.initialSupply * formData.founderAllocation / 100).toLocaleString()} tokens) 
+                    as founder allocation
+                  </p>
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={formData.founderWallet}
+                      onChange={(e) => updateFormData({ founderWallet: e.target.value })}
+                      placeholder="G... (Stellar wallet address)"
+                      className="w-full px-4 py-3 border border-secondary-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const { address } = useWalletStore.getState();
+                        if (address) {
+                          updateFormData({ founderWallet: address });
+                        }
+                      }}
+                      className="text-sm text-primary-600 hover:text-primary-700 flex items-center space-x-1"
+                    >
+                      <Wallet className="w-4 h-4" />
+                      <span>Use my connected wallet</span>
+                    </button>
+                  </div>
+                  {formData.founderWallet && !formData.founderWallet.match(/^G[A-Z2-7]{55}$/) && (
+                    <p className="text-red-600 text-sm mt-1">Please enter a valid Stellar address (starts with G)</p>
+                  )}
+                </div>
+
+                {/* Community Wallet */}
+                <div>
+                  <label className="block text-sm font-medium text-secondary-900 mb-2">
+                    Community Pool Wallet Address *
+                  </label>
+                  <p className="text-sm text-secondary-600 mb-3">
+                    This wallet will hold {formData.communityAllocation}% ({(formData.initialSupply * formData.communityAllocation / 100).toLocaleString()} tokens) 
+                    for community rewards, airdrops, and incentives
+                  </p>
+                  <input
+                    type="text"
+                    value={formData.communityWallet}
+                    onChange={(e) => updateFormData({ communityWallet: e.target.value })}
+                    placeholder="G... (Stellar wallet address)"
+                    className="w-full px-4 py-3 border border-secondary-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                  />
+                  {formData.communityWallet && !formData.communityWallet.match(/^G[A-Z2-7]{55}$/) && (
+                    <p className="text-red-600 text-sm mt-1">Please enter a valid Stellar address (starts with G)</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Security Notice */}
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mt-6">
+                <div className="flex items-start space-x-3">
+                  <Info className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <h4 className="font-medium text-yellow-900">Security Notice</h4>
+                    <ul className="text-yellow-800 text-sm mt-1 space-y-1">
+                      <li>• Make sure you have access to these wallet addresses</li>
+                      <li>• Double-check all addresses - token distribution cannot be undone</li>
+                      <li>• Consider using multi-signature wallets for treasury and community funds</li>
+                      <li>• Save these addresses securely as they will control significant token amounts</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
             </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-secondary-900 mb-2">
-                  Treasury Allocation ({formData.treasuryAllocation}%)
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={formData.treasuryAllocation}
-                  onChange={(e) => updateFormData({ treasuryAllocation: parseInt(e.target.value) })}
-                  className="w-full"
-                />
-                <div className="flex justify-between text-sm text-secondary-600 mt-1">
-                  <span>0%</span>
-                  <span>{(formData.initialSupply * formData.treasuryAllocation / 100).toLocaleString()} tokens</span>
-                  <span>100%</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary-900 mb-2">
-                  Founder Allocation ({formData.founderAllocation}%)
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={formData.founderAllocation}
-                  onChange={(e) => updateFormData({ founderAllocation: parseInt(e.target.value) })}
-                  className="w-full"
-                />
-                <div className="flex justify-between text-sm text-secondary-600 mt-1">
-                  <span>0%</span>
-                  <span>{(formData.initialSupply * formData.founderAllocation / 100).toLocaleString()} tokens</span>
-                  <span>100%</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary-900 mb-2">
-                  Community Allocation ({formData.communityAllocation}%)
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={formData.communityAllocation}
-                  onChange={(e) => updateFormData({ communityAllocation: parseInt(e.target.value) })}
-                  className="w-full"
-                />
-                <div className="flex justify-between text-sm text-secondary-600 mt-1">
-                  <span>0%</span>
-                  <span>{(formData.initialSupply * formData.communityAllocation / 100).toLocaleString()} tokens</span>
-                  <span>100%</span>
-                </div>
-              </div>
-            </div>
-
-            {totalAllocation !== 100 && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <p className="text-red-800">
-                  Total allocation: {totalAllocation}%. Must equal 100% to proceed.
-                </p>
-              </div>
-            )}
           </div>
         );
 
@@ -403,9 +678,33 @@ export default function CreateCommunityPage() {
                 <div>
                   <h4 className="font-medium text-secondary-900 mb-2">Distribution</h4>
                   <div className="space-y-2 text-sm">
-                    <div><span className="text-secondary-600">Treasury:</span> {formData.treasuryAllocation}%</div>
-                    <div><span className="text-secondary-600">Founder:</span> {formData.founderAllocation}%</div>
-                    <div><span className="text-secondary-600">Community:</span> {formData.communityAllocation}%</div>
+                    <div className="border-b border-secondary-200 pb-2 mb-2">
+                      <div className="font-medium">Treasury ({formData.treasuryAllocation}%)</div>
+                      <div className="text-xs text-secondary-500 font-mono break-all">
+                        {formData.treasuryWallet || 'Not set'}
+                      </div>
+                      <div className="text-xs text-secondary-500">
+                        {(formData.initialSupply * formData.treasuryAllocation / 100).toLocaleString()} tokens
+                      </div>
+                    </div>
+                    <div className="border-b border-secondary-200 pb-2 mb-2">
+                      <div className="font-medium">Founder ({formData.founderAllocation}%)</div>
+                      <div className="text-xs text-secondary-500 font-mono break-all">
+                        {formData.founderWallet || 'Not set'}
+                      </div>
+                      <div className="text-xs text-secondary-500">
+                        {(formData.initialSupply * formData.founderAllocation / 100).toLocaleString()} tokens
+                      </div>
+                    </div>
+                    <div>
+                      <div className="font-medium">Community ({formData.communityAllocation}%)</div>
+                      <div className="text-xs text-secondary-500 font-mono break-all">
+                        {formData.communityWallet || 'Not set'}
+                      </div>
+                      <div className="text-xs text-secondary-500">
+                        {(formData.initialSupply * formData.communityAllocation / 100).toLocaleString()} tokens
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -418,6 +717,7 @@ export default function CreateCommunityPage() {
                   <h4 className="font-medium text-accent-900">Ready to Deploy</h4>
                   <p className="text-accent-800 text-sm mt-1">
                     Your community and token contract will be deployed to the Stellar blockchain. 
+                    Tokens will be distributed to the specified wallet addresses.
                     This action cannot be undone.
                   </p>
                 </div>
@@ -502,6 +802,8 @@ export default function CreateCommunityPage() {
 
           {renderStepContent()}
 
+          {renderDeploymentStatus()}
+
           {/* Navigation Buttons */}
           <div className="flex justify-between mt-8 pt-6 border-t border-secondary-200">
             <button
@@ -517,7 +819,15 @@ export default function CreateCommunityPage() {
               <button
                 onClick={nextStep}
                 disabled={
-                  (currentStep === 4 && formData.treasuryAllocation + formData.founderAllocation + formData.communityAllocation !== 100) ||
+                  (currentStep === 4 && (
+                    formData.treasuryAllocation + formData.founderAllocation + formData.communityAllocation !== 100 ||
+                    !formData.treasuryWallet || 
+                    !formData.founderWallet || 
+                    !formData.communityWallet ||
+                    !formData.treasuryWallet.match(/^G[A-Z2-7]{55}$/) ||
+                    !formData.founderWallet.match(/^G[A-Z2-7]{55}$/) ||
+                    !formData.communityWallet.match(/^G[A-Z2-7]{55}$/)
+                  )) ||
                   (currentStep === 1 && (!formData.name || !formData.description)) ||
                   (currentStep === 2 && (!formData.tokenName || !formData.tokenSymbol))
                 }

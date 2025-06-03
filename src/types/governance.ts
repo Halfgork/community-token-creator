@@ -50,7 +50,7 @@ export interface ProposalMetadata {
   recipient?: string;
   targetMember?: string;
   newRole?: string;
-  parameters?: Record<string, any>;
+  parameters?: Record<string, string | number | boolean>;
 }
 
 export interface Vote {

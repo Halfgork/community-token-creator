@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { 
   Plus, 
@@ -12,12 +13,28 @@ import {
   Settings,
   Coins,
   Wallet,
-  ArrowRight
+  ArrowRight,
+  Activity
 } from "lucide-react";
-import { ConnectWallet } from "@/components/shared/ConnectWallet";
+import ConnectWallet from '@/components/shared/ConnectWallet';
 import { useWalletStore } from "@/stores/walletStore";
 
-// Mock data for demonstration
+interface Community {
+  id: string;
+  name: string;
+  tokenSymbol: string;
+  tokenName: string;
+  contractId: string;
+  memberCount: number;
+  treasuryBalance?: number;
+  activeProposals?: number;
+  description: string;
+  totalSupply: string;
+  createdAt: string;
+  isOwner: boolean;
+}
+
+// Mock data for demonstration (fallback)
 const mockCommunities = [
   {
     id: '1',
@@ -131,6 +148,33 @@ function WalletRequired() {
 
 export default function DashboardPage() {
   const { isConnected } = useWalletStore();
+  const [communities, setCommunities] = useState<Community[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadCommunities = () => {
+      try {
+        // Load communities from localStorage
+        const savedCommunities = localStorage.getItem('communities');
+        if (savedCommunities) {
+          const parsedCommunities = JSON.parse(savedCommunities);
+          setCommunities(parsedCommunities);
+        } else {
+          // Fallback to mock data if no communities in localStorage
+          setCommunities([]);
+        }
+      } catch (error) {
+        console.error('Error loading communities:', error);
+        setCommunities([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (isConnected) {
+      loadCommunities();
+    }
+  }, [isConnected]);
 
   // If wallet is not connected, show the wallet required screen
   if (!isConnected) {
@@ -175,7 +219,9 @@ export default function DashboardPage() {
         {/* Welcome Section */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-secondary-900 mb-2">Welcome back!</h1>
-          <p className="text-secondary-600">Manage your communities and track their progress</p>
+          <p className="text-sm text-secondary-600">
+            Welcome back! Here&apos;s what&apos;s happening with your communities.
+          </p>
         </div>
 
         {/* Create Community CTA Banner */}
@@ -204,7 +250,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-secondary-600 text-sm font-medium">Total Communities</p>
-                <p className="text-2xl font-bold text-secondary-900">{mockCommunities.length}</p>
+                <p className="text-2xl font-bold text-secondary-900">{communities.length}</p>
               </div>
               <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
                 <Users className="w-6 h-6 text-primary-600" />
@@ -217,7 +263,7 @@ export default function DashboardPage() {
               <div>
                 <p className="text-secondary-600 text-sm font-medium">Total Members</p>
                 <p className="text-2xl font-bold text-secondary-900">
-                  {mockCommunities.reduce((acc, comm) => acc + comm.memberCount, 0)}
+                  {communities.reduce((acc, comm) => acc + comm.memberCount, 0)}
                 </p>
               </div>
               <div className="w-12 h-12 bg-accent-100 rounded-lg flex items-center justify-center">
@@ -231,7 +277,7 @@ export default function DashboardPage() {
               <div>
                 <p className="text-secondary-600 text-sm font-medium">Active Proposals</p>
                 <p className="text-2xl font-bold text-secondary-900">
-                  {mockCommunities.reduce((acc, comm) => acc + comm.activeProposals, 0)}
+                  {communities.reduce((acc, comm) => acc + (comm.activeProposals || 0), 0)}
                 </p>
               </div>
               <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
@@ -245,7 +291,7 @@ export default function DashboardPage() {
               <div>
                 <p className="text-secondary-600 text-sm font-medium">Total Treasury</p>
                 <p className="text-2xl font-bold text-secondary-900">
-                  ${mockCommunities.reduce((acc, comm) => acc + comm.treasuryBalance, 0).toLocaleString()}
+                  ${communities.reduce((acc, comm) => acc + (comm.treasuryBalance || 0), 0).toLocaleString()}
                 </p>
               </div>
               <div className="w-12 h-12 bg-accent-100 rounded-lg flex items-center justify-center">
@@ -270,7 +316,7 @@ export default function DashboardPage() {
                 </Link>
               </div>
               
-              {mockCommunities.length === 0 ? (
+              {communities.length === 0 ? (
                 <div className="text-center py-16">
                   <div className="w-20 h-20 bg-secondary-100 rounded-full flex items-center justify-center mx-auto mb-6">
                     <Users className="w-10 h-10 text-secondary-400" />
@@ -289,10 +335,10 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {mockCommunities.map((community) => (
+                  {communities.map((community) => (
                     <Link
                       key={community.id}
-                      href={`/community/${community.id}`}
+                      href={`/community/${community.contractId}`}
                       className="block p-4 border border-secondary-200 rounded-lg hover:border-primary-300 hover:bg-primary-50 transition-colors"
                     >
                       <div className="flex items-center justify-between">
@@ -305,14 +351,14 @@ export default function DashboardPage() {
                           <div>
                             <h3 className="font-semibold text-secondary-900">{community.name}</h3>
                             <p className="text-secondary-600 text-sm">
-                              {community.memberCount} members • ${community.treasuryBalance.toLocaleString()} treasury
+                              {community.memberCount} members • ${(community.treasuryBalance || 0).toLocaleString()} treasury
                             </p>
                           </div>
                         </div>
                         <div className="text-right">
                           <p className="text-primary-600 font-semibold">{community.tokenSymbol}</p>
                           <p className="text-secondary-500 text-sm">
-                            {community.activeProposals} active proposals
+                            {community.activeProposals?.toString() || 'N/A'} active proposals
                           </p>
                         </div>
                       </div>

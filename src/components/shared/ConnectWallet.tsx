@@ -1,85 +1,57 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { StellarWalletsKit, WalletNetwork, allowAllModules } from '@creit.tech/stellar-wallets-kit';
-import { Wallet, ChevronDown, LogOut, Copy, Check } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useWalletStore } from '@/stores/walletStore';
-import { truncateAddress } from '@/lib/utils';
+import { Wallet, Loader2 } from 'lucide-react';
+import { StellarWalletsKit, WalletNetwork, allowAllModules } from '@creit.tech/stellar-wallets-kit';
 
-let kit: StellarWalletsKit | null = null;
-
-// Initialize kit only on client side
-if (typeof window !== 'undefined') {
-  try {
-    kit = new StellarWalletsKit({
-      network: WalletNetwork.TESTNET,
-      selectedWalletId: 'freighter', // Use a default wallet ID
-      modules: allowAllModules(),
-    });
-  } catch (error) {
-    console.error('Failed to initialize Stellar Wallets Kit:', error);
-  }
-}
-
-export function ConnectWallet() {
-  const [isOpen, setIsOpen] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [copied, setCopied] = useState(false);
-  
+export default function ConnectWallet() {
   const { 
     isConnected, 
     address, 
-    balance, 
     connect, 
-    disconnect, 
-    network
+    disconnect
   } = useWalletStore();
+  
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+  const [kit, setKit] = useState<StellarWalletsKit | null>(null);
 
+  // Handle hydration mismatch by only showing interactive content after mount
   useEffect(() => {
-    // Check if wallet was previously connected
-    checkConnection();
-  }, []);
-
-  const checkConnection = async () => {
-    if (!kit) return;
+    setIsMounted(true);
     
-    try {
-      // Try to get address from previously connected wallet
-      const response = await kit.getAddress();
-      const walletAddress = typeof response === 'string' ? response : response.address;
-      if (walletAddress && !isConnected) {
-        connect(walletAddress, walletAddress);
-        // You could also fetch balance here if needed
-        setBalance(100); // Mock balance for now
+    // Initialize kit only on client side
+    if (typeof window !== 'undefined') {
+      try {
+        const walletKit = new StellarWalletsKit({
+          network: WalletNetwork.TESTNET,
+          selectedWalletId: 'freighter',
+          modules: allowAllModules(),
+        });
+        setKit(walletKit);
+      } catch (error) {
+        console.error('Failed to initialize Stellar Wallets Kit:', error);
       }
-    } catch (error) {
-      console.log('No previous wallet connection found');
     }
-  };
-
-  const setBalance = (balance: number) => {
-    // You can implement balance fetching logic here
-    useWalletStore.getState().setBalance(balance);
-  };
+  }, []);
 
   const handleConnect = async () => {
     if (!kit) {
-      console.error('Stellar Wallets Kit not initialized');
+      console.warn('Stellar Wallets Kit not available');
       return;
     }
-    
+
     setIsConnecting(true);
     try {
       await kit.openModal({
         onWalletSelected: async (option) => {
           try {
-            kit?.setWallet(option.id);
-            const response = await kit?.getAddress();
+            kit.setWallet(option.id);
+            const response = await kit.getAddress();
             const walletAddress = typeof response === 'string' ? response : response?.address;
             if (walletAddress) {
-              connect(walletAddress, walletAddress);
-              setBalance(100); // Mock balance - you can implement real balance fetching
-              setIsOpen(false);
+              connect(walletAddress, walletAddress); // Using address as both address and publicKey
             }
           } catch (error) {
             console.error('Failed to get wallet address:', error);
@@ -93,85 +65,57 @@ export function ConnectWallet() {
     }
   };
 
-  const handleDisconnect = () => {
-    disconnect();
-    setIsOpen(false);
-  };
-
-  const copyAddress = async () => {
-    if (address) {
-      await navigator.clipboard.writeText(address);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const handleDisconnect = async () => {
+    try {
+      disconnect();
+    } catch (error) {
+      console.error('Failed to disconnect wallet:', error);
     }
   };
 
-  if (!isConnected) {
+  // Show loading state during SSR/hydration
+  if (!isMounted) {
     return (
-      <button
-        onClick={handleConnect}
-        disabled={isConnecting || !kit}
-        className="bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors font-medium flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        <Wallet className="w-4 h-4" />
-        <span>{isConnecting ? 'Connecting...' : 'Connect Wallet'}</span>
-      </button>
+      <div className="w-32 h-10 bg-gray-200 rounded-lg animate-pulse" />
+    );
+  }
+
+  if (isConnected && address) {
+    return (
+      <div className="flex items-center space-x-3">
+        <div className="text-sm">
+          <span className="text-secondary-600">Connected:</span>
+          <span className="font-mono text-secondary-900 ml-1">
+            {address.slice(0, 4)}...{address.slice(-4)}
+          </span>
+        </div>
+        <button
+          onClick={handleDisconnect}
+          className="bg-secondary-600 text-white px-4 py-2 rounded-lg hover:bg-secondary-700 transition-colors text-sm"
+        >
+          Disconnect
+        </button>
+      </div>
     );
   }
 
   return (
-    <div className="relative">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors font-medium flex items-center space-x-2"
-      >
-        <Wallet className="w-4 h-4" />
-        <span>{truncateAddress(address || '')}</span>
-        <ChevronDown className="w-4 h-4" />
-      </button>
-
-      {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-secondary-200 py-2 z-50">
-          {/* Wallet Info */}
-          <div className="px-4 py-3 border-b border-secondary-200">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-secondary-900">Connected Wallet</span>
-              <span className="text-xs bg-accent-100 text-accent-700 px-2 py-1 rounded-full capitalize">
-                {network}
-              </span>
-            </div>
-            <div className="flex items-center space-x-2 mb-2">
-              <span className="text-sm text-secondary-600 font-mono">
-                {address}
-              </span>
-              <button
-                onClick={copyAddress}
-                className="p-1 hover:bg-secondary-100 rounded transition-colors"
-              >
-                {copied ? (
-                  <Check className="w-4 h-4 text-accent-600" />
-                ) : (
-                  <Copy className="w-4 h-4 text-secondary-500" />
-                )}
-              </button>
-            </div>
-            <div className="text-sm text-secondary-600">
-              Balance: {balance.toFixed(4)} XLM
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="border-t border-secondary-200 px-4 py-2">
-            <button
-              onClick={handleDisconnect}
-              className="w-full flex items-center space-x-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-              <span>Disconnect</span>
-            </button>
-          </div>
-        </div>
+    <button
+      onClick={handleConnect}
+      disabled={isConnecting || !kit}
+      className="bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors font-medium flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {isConnecting ? (
+        <>
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Connecting...</span>
+        </>
+      ) : (
+        <>
+          <Wallet className="w-4 h-4" />
+          <span>Connect Wallet</span>
+        </>
       )}
-    </div>
+    </button>
   );
 } 
